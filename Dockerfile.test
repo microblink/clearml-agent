@@ -1,0 +1,10 @@
+FROM docker.io/allegroai/clearml-agent-k8s-base:1.24-21
+RUN pip install -U clearml-agent==2.0.8rc0
+COPY ./docker/k8s-glue/build-resources/entrypoint.sh /root/entrypoint.sh
+RUN chmod +x /root/entrypoint.sh
+COPY ./clearml_agent/glue/k8s.py /usr/local/lib/python3.6/dist-packages/clearml_agent/glue/k8s.py
+COPY ./clearml_agent/glue/definitions.py /usr/local/lib/python3.6/dist-packages/clearml_agent/glue/definitions.py
+COPY ./clearml_agent/helper/docker_args.py /usr/local/lib/python3.6/dist-packages/clearml_agent/helper/docker_args.py
+COPY ./clearml_agent/helper/resource_monitor.py /usr/local/lib/python3.6/dist-packages/clearml_agent/helper/resource_monitor.py
+COPY ./clearml_agent/helper/custom_template.py /usr/local/lib/python3.6/dist-packages/clearml_agent/helper/custom_template.py
+COPY ./clearml_agent/commands/worker.py /usr/local/lib/python3.6/dist-packages/clearml_agent/commands/worker.py

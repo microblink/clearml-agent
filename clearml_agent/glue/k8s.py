@@ -43,6 +43,7 @@ from clearml_agent.glue.definitions import (
     ENV_POD_USE_IMAGE_ENTRYPOINT,
     ENV_KUBECTL_IGNORE_ERROR,
     ENV_DEFAULT_SCHEDULER_QUEUE_TAGS,
+    ENV_LOG_POD_STATUS_BEFORE_DELETING,
 )
 from .._vendor import pyyaml as yaml
 
@@ -81,6 +82,8 @@ class K8sIntegration(Worker):
     ]
 
     CONTAINER_BASH_SCRIPT = [
+        'git config --global url."https://${{CLEARML_AGENT_GIT_USER}}:${{CLEARML_AGENT_GIT_PASS}}@github.com/".insteadOf "https://github.com/"',
+        'git config --global url."https://${{CLEARML_AGENT_GIT_USER}}:${{CLEARML_AGENT_GIT_PASS}}@github.com/".insteadOf "git@github.com:"',
         *(
             '[ ! -z "$CLEARML_AGENT_SKIP_CONTAINER_APT" ] || {}'.format(line)
             for line in _CONTAINER_APT_SCRIPT_SECTION
@@ -94,7 +97,7 @@ class K8sIntegration(Worker):
         "[ ! -z $CLEARML_AGENT_NO_UPDATE ] || $LOCAL_PYTHON -m pip --version > /dev/null || export LOCAL_PYTHON=$(PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin command -v python3)",
         "rm -f /usr/lib/python3.*/EXTERNALLY-MANAGED",  # remove PEP 668
         "{extra_bash_init_cmd}",
-        "[ ! -z $CLEARML_AGENT_NO_UPDATE ] || $LOCAL_PYTHON -m pip install clearml-agent{agent_install_args}",
+        "[ ! -z $CLEARML_AGENT_NO_UPDATE ] || $LOCAL_PYTHON -m pip install git+https://github.com/microblink/clearml-agent.git@${{CLEARML_AGENT_COMMIT}}{agent_install_args}",
         "{extra_docker_bash_script}",
         "$LOCAL_PYTHON -m clearml_agent execute {default_execution_agent_args} --id {task_id}"
     ]
@@ -224,6 +227,7 @@ class K8sIntegration(Worker):
         self.ignore_kubectl_errors_re = (
             re.compile(ENV_KUBECTL_IGNORE_ERROR.get()) if ENV_KUBECTL_IGNORE_ERROR.get() else None
         )
+        self.log_pod_status_before_deleting = ENV_LOG_POD_STATUS_BEFORE_DELETING.get()
 
     @property
     def agent_label(self):
@@ -435,7 +439,7 @@ class K8sIntegration(Worker):
             output_config = json.loads(output)
         except Exception as ex:
             self.log.warning('Failed parsing kubectl output:\n{}\nEx: {}'.format(output, ex))
-            return
+            return []
         return output_config.get('items', [])
 
     def _get_pod_count(self, extra_labels: List[str] = None, msg: str = None):
@@ -1055,7 +1059,71 @@ class K8sIntegration(Worker):
         ]
         return lines
 
+    def _log_pod_statuses(self, pods: List[Dict]):
+        """
+        Log pod status and exit codes to the task's console log.
+        :param pods: A list of pod dictionaries to log.
+        :param msg: A message to log.
+        """
+        if not pods:
+            return
+        for pod in pods:
+            pod_name = get_path(pod, "metadata", "name")
+            task_id = pod_name[len(self.pod_name_prefix) :]
+
+            # Log pod status and exit codes
+            pod_status = get_path(pod, "status", "phase")
+            ctr_statuses = get_path(pod, "status", "containerStatuses") or []
+
+            log_lines = []
+            log_lines.append(
+                "Pod '{pod_name}' ended with status '{pod_status}'".format(
+                    pod_name=pod_name, pod_status=pod_status
+                )
+            )
+
+            for ctr_status in ctr_statuses:
+                ctr_name = ctr_status.get("name")
+                ctr_state = get_path(ctr_status, "state")
+                ctr_reason = get_path(ctr_state, "terminated", "reason")
+                ctr_exit_code = get_path(ctr_state, "terminated", "exitCode")
+                log_lines.append(
+                    "Container '{name}' ended with reason '{reason}' and exit code '{exit_code}'".format(
+                        name=ctr_name, reason=ctr_reason, exit_code=ctr_exit_code
+                    )
+                )
+
+            try:
+                self.send_logs(task_id, [os.linesep.join(log_lines)])
+            except Exception as ex:
+                self.log.warning(f"Failed sending pod status logs for task {task_id}: {ex}")
+
+    def _delete_pods_by_names(self, names: List[str], namespace: str, msg: str = None) -> List[str]:
+        if not names:
+            return []
+        kubectl_cmd = "kubectl delete pod --namespace={ns} {names} --output=name".format(
+            ns=namespace, names=" ".join(names)
+        )
+        self.log.debug("Deleting pods by name {}: {}".format(
+            msg or "", kubectl_cmd
+        ))
+        lines = self._process_bash_lines_response(kubectl_cmd)
+        self.log.debug(" - deleted pods by name %s", ", ".join(lines))
+        return lines
+
     def _delete_pods(self, selectors: List[str], namespace: str, msg: str = None) -> List[str]:
+        if self.log_pod_status_before_deleting:
+            pods_to_delete = self.get_pods(
+                filters=selectors,
+                debug_msg="Getting pods to delete: {cmd}",
+            )
+            self._log_pod_statuses(pods_to_delete)
+            return self._delete_pods_by_names(
+                    [get_path(p, "metadata", "name") for p in pods_to_delete if get_path(p, "metadata", "name")],
+                    namespace,
+                    msg=msg
+                )
+
         kubectl_cmd = \
             "kubectl delete pod -l={agent_label} " \
             "--namespace={namespace} --field-selector={selector} --output name".format(
@@ -1107,6 +1175,8 @@ class K8sIntegration(Worker):
             debug_msg="Deleting failed pods: {cmd}"
         )
         if failed_pods:
+            if self.log_pod_status_before_deleting:
+                self._log_pod_statuses(failed_pods)
             job_names_to_delete = {
                 get_path(pod, "metadata", "labels", "job-name"): get_path(pod, "metadata", "namespace")
                 for pod in failed_pods

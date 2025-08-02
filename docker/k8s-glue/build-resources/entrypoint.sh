@@ -12,14 +12,6 @@ export CLEARML_API_HOST=${CLEARML_API_HOST:-${TRAINS_API_HOST:-"http://$CLEARML_
 
 echo $CLEARML_FILES_HOST $CLEARML_WEB_HOST $CLEARML_API_HOST 1>&2
 
-if [ -z "$CLEARML_AGENT_NO_UPDATE" ]; then
-  if [ -n "$CLEARML_AGENT_UPDATE_REPO" ]; then
-    python3 -m pip install -q -U "$CLEARML_AGENT_UPDATE_REPO"
-  else
-    python3 -m pip install -q -U "clearml-agent${CLEARML_AGENT_UPDATE_VERSION:-$TRAINS_AGENT_UPDATE_VERSION}"
-  fi
-fi
-
 QUEUE=${K8S_GLUE_QUEUE:-k8s_glue}
 MAX_PODS=${K8S_GLUE_MAX_PODS:-2}
 EXTRA_ARGS=${K8S_GLUE_EXTRA_ARGS:-}
@@ -32,6 +24,7 @@ echo "api.web_server: ${CLEARML_WEB_HOST}" >> ~/clearml.conf
 echo "api.files_server: ${CLEARML_FILES_HOST}" >> ~/clearml.conf
 
 ./provider_entrypoint.sh
+
 
 if [[ -z "${K8S_GLUE_MAX_PODS}" ]]
 then

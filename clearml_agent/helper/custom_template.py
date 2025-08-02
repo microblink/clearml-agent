@@ -71,7 +71,7 @@ class CustomTemplate(Template):
     """
 
     delimiter = '$'
-    idpattern = r'(?a:[_a-z][_a-z0-9|.|:]*)'
+    # idpattern = r'(?a:[_a-z][_a-z0-9|.|:]*)'
     prefix = "CLEARML_"
     filter_sep = "|"
     filter_re = re.compile(r"^(?P<op>[^(]+)(\((?P<args>[^()]*)\))?")

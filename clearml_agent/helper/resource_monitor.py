@@ -14,6 +14,7 @@ from .._vendor import attr
 import psutil
 from .._vendor.pathlib2 import Path
 
+from clearml_agent.commands.events import Events
 from clearml_agent.definitions import ENV_WORKER_TAGS, ENV_GPU_FRACTIONS
 from clearml_agent.session import Session
 
@@ -337,6 +338,9 @@ class ResourceMonitor(object):
                     # clear readouts if this is update was sent
                     self._clear_readouts()
 
+                # report /kd-cache disk free space via events API
+                self._report_kd_cache_disk(seconds_since_started)
+
                 # count reported iterations
                 reported += 1
 
@@ -500,6 +504,44 @@ class ResourceMonitor(object):
                 "GPU monitoring failed getting GPU reading, switching off GPU monitoring"
             )
             self._gpustat = None
+
+    def _report_kd_cache_disk(self, iter):
+        """
+        Report /kd-cache disk free space via events API if the mount exists.
+        """
+        report = self.get_report()
+        task_id = report.task if report else None
+        if not task_id:
+            return
+
+        kd_cache_path = "/kd-cache"
+        try:
+            if not os.path.exists(kd_cache_path):
+                return
+
+            disk_usage = psutil.disk_usage(kd_cache_path)
+            disk_free_percent = disk_usage.free / disk_usage.total * 100
+
+            event = {
+                "type": "training_stats_scalar",
+                "task": task_id,
+                "metric": ":monitor:machine",
+                "variant": "disk_kd_cache_percent_free",
+                "value": disk_free_percent,
+                "iter": iter,
+                "timestamp": int(time() * 1000),
+            }
+
+            try:
+                events_service = Events(self.session.config)
+                events_service.send_events([event], session=self.session)
+            except Exception as ex:
+                log.error("Failed to send /kd-cache disk free percent metric: %s", ex)
+
+        except (OSError, PermissionError) as e:
+            log.error("Cannot access /kd-cache mount: %s", e)
+        except Exception as e:
+            log.error("Error checking /kd-cache mount: %s", e)
 
     BACKEND_STAT_MAP = {
         "cpu_usage_*": "cpu_usage",

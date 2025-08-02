@@ -3819,53 +3819,7 @@ class Worker(ServiceCommandSection):
         if requirements_manager:
             requirements_manager.set_cwd(cwd)
 
-        cached_requirements_failed = False
-        if not repo_info or (
-                cached_requirements and
-                (cached_requirements.get('pip') is not None or
-                 cached_requirements.get('conda') is not None)
-        ):
-            self.log("Found task requirements section, trying to install")
-            cached_requirements = cached_requirements or {}
-
-            if ENV_AGENT_FORCE_TASK_INIT.get():
-                # notice we have PackageCollectorRequirement to protect against double includes of "clearml"
-                print("Force clearml Task.init patch adding clearml package to requirements")
-                if not cached_requirements or cached_requirements.get('pip'):
-                    cached_requirements["pip"] = ("clearml\n" + cached_requirements.get("pip", "")) \
-                        if isinstance(cached_requirements.get("pip", ""), str) else \
-                        (["clearml"] + cached_requirements.get("pip", []))
-                if cached_requirements.get('conda'):
-                    cached_requirements["conda"] = ("clearml\n" + cached_requirements["conda"]) \
-                        if isinstance(cached_requirements["conda"], str) else \
-                        (["clearml"] + cached_requirements["conda"])
-
-            # check if we need to push jupyter nbconvert if we need to run ipynb
-            if execution.entry_point and execution.entry_point.strip().lower().endswith('.ipynb'):
-                print("Force nbconvert patch to convert .ipynb to python")
-                # now we have to make sure we run it with jupyter notebook
-                if not cached_requirements or cached_requirements.get('pip'):
-                    cached_requirements["pip"] = ("nbconvert\nipython\n" + cached_requirements.get("pip", "")) \
-                        if isinstance(cached_requirements.get("pip", ""), str) else \
-                        (["nbconvert", "ipython"] + cached_requirements.get("pip", []))
-                if cached_requirements.get('conda'):
-                    cached_requirements["conda"] = ("nbconvert\nipython\n" + cached_requirements["conda"]) \
-                        if isinstance(cached_requirements["conda"], str) else \
-                        (["nbconvert", "ipython"] + cached_requirements["conda"])
-
-            try:
-                package_api.load_requirements(cached_requirements)
-            except Exception as e:
-                self.log_traceback(e)
-                cached_requirements_failed = True
-                raise ValueError("Could not install task requirements!\n{}".format(e))
-            else:
-                self.log("task requirements installation passed")
-                return
-
         if not repo_info:
-            if cached_requirements_failed:
-                raise ValueError("Could not install task requirements!")
             self.log("no repository to install requirements from")
             return
 
@@ -3912,10 +3866,9 @@ class Worker(ServiceCommandSection):
             # mark as successful installation
             repo_requirements_installed = True
 
-        # if we reached here without installing anything, and
-        # we failed installing from cached requirements, them this is an error
-        if cached_requirements_failed and not repo_requirements_installed:
-            raise ValueError("Failed installing task requirements and repository requirements")
+        # if we reached here without installing anything, then this is an error
+        if not repo_requirements_installed:
+            raise ValueError("Failed installing repository requirements (and cached requirements were skipped)")
 
     def named_temporary_file(self, *args, **kwargs):
         kwargs.setdefault("delete", not self._session.debug_mode)

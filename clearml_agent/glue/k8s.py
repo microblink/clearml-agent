@@ -84,7 +84,7 @@ class K8sIntegration(Worker):
     CONTAINER_BASH_SCRIPT = [
         'git config --global --add url."https://${{CLEARML_AGENT_GIT_USER}}:${{CLEARML_AGENT_GIT_PASS}}@github.com/".insteadOf "https://github.com/"',
         'git config --global --add url."https://${{CLEARML_AGENT_GIT_USER}}:${{CLEARML_AGENT_GIT_PASS}}@github.com/".insteadOf "git@github.com:"',
-        'git config --global --add url."https://${{CLEARML_AGENT_GIT_USER}}:${{CLEARML_AGENT_GIT_PASS}}@github.com/".insteadOf "ssh://git@github.com:"',
+        'git config --global --add url."https://${{CLEARML_AGENT_GIT_USER}}:${{CLEARML_AGENT_GIT_PASS}}@github.com/".insteadOf "ssh://git@github.com/"',
         *(
             '[ ! -z "$CLEARML_AGENT_SKIP_CONTAINER_APT" ] || {}'.format(line)
             for line in _CONTAINER_APT_SCRIPT_SECTION

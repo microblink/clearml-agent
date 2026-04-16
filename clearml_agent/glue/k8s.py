@@ -16,6 +16,10 @@ from pprint import pformat
 from time import sleep, time
 from typing import Text, List, Callable, Any, Collection, Optional, Union, Iterable, Dict, Tuple, Set
 
+_GITHUB_APP_TOKEN_SCRIPT_B64 = base64.b64encode(
+    (Path(__file__).parent / "github_app_token.py").read_text().encode()
+).decode()
+
 from clearml_agent.commands.events import Events
 from clearml_agent.commands.worker import Worker, get_task_container, set_task_container, get_next_task
 from clearml_agent.definitions import (
@@ -82,6 +86,16 @@ class K8sIntegration(Worker):
     ]
 
     CONTAINER_BASH_SCRIPT = [
+        "declare LOCAL_PYTHON",
+        "[ ! -z $LOCAL_PYTHON ] || for i in {{20..5}}; do (which python3.$i 2> /dev/null || command -v python3.$i) && python3.$i -m pip --version && "
+        "export LOCAL_PYTHON=$(which python3.$i 2> /dev/null || command -v python3.$i) && break ; done",
+        "[ ! -z $LOCAL_PYTHON ] || export LOCAL_PYTHON=python3",
+        "echo '{}' | base64 --decode > /tmp/github_app_token.py".format(_GITHUB_APP_TOKEN_SCRIPT_B64),
+        "export CLEARML_AGENT_GIT_USER=x-access-token",
+        "export CLEARML_AGENT_GIT_PASS=$($LOCAL_PYTHON /tmp/github_app_token.py)",
+        "export CLEARML_AGENT_GIT_USER_GITHUB=$CLEARML_AGENT_GIT_USER",
+        "export CLEARML_AGENT_GIT_PASS_GITHUB=$CLEARML_AGENT_GIT_PASS",
+        "export CLEARML_AGENT_GIT_HOST=github.com",
         'git config --global --add url."https://${{CLEARML_AGENT_GIT_USER}}:${{CLEARML_AGENT_GIT_PASS}}@github.com/".insteadOf "https://github.com/"',
         'git config --global --add url."https://${{CLEARML_AGENT_GIT_USER}}:${{CLEARML_AGENT_GIT_PASS}}@github.com/".insteadOf "git@github.com:"',
         'git config --global --add url."https://${{CLEARML_AGENT_GIT_USER}}:${{CLEARML_AGENT_GIT_PASS}}@github.com/".insteadOf "ssh://git@github.com/"',
@@ -89,12 +103,8 @@ class K8sIntegration(Worker):
             '[ ! -z "$CLEARML_AGENT_SKIP_CONTAINER_APT" ] || {}'.format(line)
             for line in _CONTAINER_APT_SCRIPT_SECTION
         ),
-        "declare LOCAL_PYTHON",
-        "[ ! -z $LOCAL_PYTHON ] || for i in {{20..5}}; do (which python3.$i 2> /dev/null || command -v python3.$i) && python3.$i -m pip --version && "
-        "export LOCAL_PYTHON=$(which python3.$i 2> /dev/null || command -v python3.$i) && break ; done",
         '[ ! -z "$CLEARML_AGENT_SKIP_CONTAINER_APT" ] || [ ! -z "$LOCAL_PYTHON" ] || '
         'apt-get install -y python3-pip || dnf install -y python3-pip',
-        "[ ! -z $LOCAL_PYTHON ] || export LOCAL_PYTHON=python3",
         "[ ! -z $CLEARML_AGENT_NO_UPDATE ] || $LOCAL_PYTHON -m pip --version > /dev/null || export LOCAL_PYTHON=$(PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin command -v python3)",
         "rm -f /usr/lib/python3.*/EXTERNALLY-MANAGED",  # remove PEP 668
         "{extra_bash_init_cmd}",
